@@ -1,0 +1,1862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRECIP.LAB — Stacked Ensemble Rainfall Predictor</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=JetBrains+Mono:wght@300;400;500;700&family=Inter+Tight:wght@300..800&display=swap" rel="stylesheet">
+
+<style>
+/* ---------------------------------------------------------
+   DESIGN SYSTEM
+   --------------------------------------------------------- */
+:root {
+  --bg-0:       #0a0d14;
+  --bg-1:       #0f1419;
+  --bg-2:       #161b22;
+  --bg-3:       #1a1f2e;
+  --line:       #2a3141;
+  --line-2:     #3a4556;
+  --ink-0:      #f3f4f6;
+  --ink-1:      #d1d5db;
+  --ink-2:      #9ca3af;
+  --ink-3:      #6b7280;
+  --accent:     #60a5fa;   /* electric blue  */
+  --accent-2:   #f59e0b;   /* amber/thunder  */
+  --accent-3:   #34d399;   /* rain green     */
+  --accent-4:   #f472b6;   /* magenta        */
+  --accent-5:   #a78bfa;   /* violet         */
+  --danger:     #ef4444;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: 'Inter Tight', 'Helvetica Neue', system-ui, sans-serif;
+  background: var(--bg-0);
+  color: var(--ink-1);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Atmospheric grain texture */
+html { scroll-behavior: smooth; }
+
+@keyframes bgDrift {
+  0% { background-position: 0% 0%; }
+  50% { background-position: 100% 100%; }
+  100% { background-position: 0% 0%; }
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-size: 200% 200%;
+  animation: bgDrift 40s ease-in-out infinite;
+  background-image:
+    radial-gradient(ellipse 80% 60% at 15% 0%,  rgba(96,165,250,0.08), transparent 50%),
+    radial-gradient(ellipse 60% 50% at 90% 10%, rgba(245,158,11,0.05), transparent 50%),
+    radial-gradient(ellipse 70% 50% at 50% 100%, rgba(167,139,250,0.06), transparent 50%);
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.35;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.035 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* ---------------------------------------------------------
+   LAYOUT  & HEADER
+   --------------------------------------------------------- */
+.container {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 0 clamp(1.25rem, 3vw, 3.25rem);
+  position: relative;
+  z-index: 10;
+}
+
+header.site-hd {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  background: rgba(10, 13, 20, 0.72);
+  border-bottom: 1px solid var(--line);
+}
+.hd-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 0;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+  color: var(--ink-0);
+}
+.brand .dot {
+  width: 0.55rem; height: 0.55rem;
+  background: var(--accent-2);
+  border-radius: 50%;
+  box-shadow: 0 0 18px var(--accent-2);
+  transform: translateY(-0.25rem);
+  animation: pulse 3s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.5; } }
+.brand small {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 400;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--ink-3);
+  margin-left: 0.5rem;
+}
+.hd-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  letter-spacing: 0.08em;
+  display: flex;
+  gap: 1.5rem;
+}
+.hd-meta span::before {
+  content: '■';
+  color: var(--accent);
+  margin-right: 0.4rem;
+  font-size: 0.5rem;
+  vertical-align: middle;
+}
+.hd-meta span:nth-child(2)::before { color: var(--accent-3); }
+.hd-meta span:nth-child(3)::before { color: var(--accent-2); }
+
+/* ---------------------------------------------------------
+   HERO / INTRO
+   --------------------------------------------------------- */
+.hero { padding: 4.5rem 0 3rem; position: relative; }
+
+.eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+.eyebrow::before {
+  content: '';
+  width: 2.25rem;
+  height: 1px;
+  background: var(--accent);
+}
+h1.hero-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 300;
+  font-size: clamp(2.7rem, 6.5vw, 5.5rem);
+  line-height: 0.97;
+  letter-spacing: -0.035em;
+  color: var(--ink-0);
+  margin-bottom: 1.75rem;
+}
+h1.hero-title em {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--accent-2);
+}
+h1.hero-title .amp {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-weight: 300;
+  color: var(--accent-3);
+}
+.lede {
+  max-width: 62ch;
+  font-size: clamp(1.02rem, 1.3vw, 1.18rem);
+  color: var(--ink-2);
+  line-height: 1.65;
+}
+.lede strong { color: var(--ink-0); font-weight: 500; }
+
+/* ---------------------------------------------------------
+   UPLOAD BLOCK
+   --------------------------------------------------------- */
+.upload-section {
+  margin: 3rem 0 4rem;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 2.5rem;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .upload-section { grid-template-columns: 1fr; }
+}
+.drop-zone {
+  border: 1.5px dashed var(--line-2);
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  border-radius: 4px;
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.drop-zone::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent,
+              rgba(96,165,250,0.07), transparent);
+  transition: left 0.6s ease;
+}
+.drop-zone:hover::before { left: 100%; }
+.drop-zone:hover {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--bg-2), #1c2435);
+}
+.drop-zone.dragging {
+  border-color: var(--accent);
+  border-style: solid;
+  background: #1c2435;
+}
+.drop-icon {
+  font-family: 'Fraunces', serif;
+  font-size: 3.5rem;
+  color: var(--accent);
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+.drop-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.45rem;
+  font-weight: 500;
+  color: var(--ink-0);
+  margin-bottom: 0.35rem;
+}
+.drop-sub {
+  font-size: 0.88rem;
+  color: var(--ink-2);
+  margin-bottom: 1.25rem;
+}
+.drop-mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+#file-input { display: none; }
+.file-chosen {
+  margin-top: 1.5rem;
+  padding: 0.85rem 1rem;
+  background: var(--bg-3);
+  border-left: 2px solid var(--accent-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--ink-0);
+  text-align: left;
+  display: none;
+}
+.file-chosen.show { display: block; }
+.file-chosen .fname { color: var(--accent-3); }
+.file-chosen .fsize { color: var(--ink-2); margin-left: 0.75rem; font-size: 0.75rem; }
+
+/* Control panel */
+.panel {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  padding: 2rem;
+  border-radius: 2px;
+  position: relative;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 2.5rem; height: 2px;
+  background: var(--accent-2);
+}
+.panel h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 1.15rem;
+  color: var(--ink-0);
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.01em;
+}
+.radio-group { display: grid; gap: 0.5rem; }
+.radio-pill {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--ink-1);
+  border-radius: 2px;
+}
+.radio-pill:hover { border-color: var(--line-2); }
+.radio-pill.active {
+  border-color: var(--accent);
+  background: rgba(96, 165, 250, 0.07);
+  color: var(--ink-0);
+}
+.radio-pill .dot-r {
+  width: 0.55rem; height: 0.55rem;
+  border: 1.5px solid var(--line-2);
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.radio-pill.active .dot-r {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.radio-pill small {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--ink-3);
+  margin-left: auto;
+}
+
+.run-btn {
+  margin-top: 1.5rem;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  background: var(--accent-2);
+  color: #1a1300;
+  border: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.run-btn:hover:not(:disabled) {
+  background: #fbbf24;
+  box-shadow: 0 0 24px rgba(245,158,11,0.35);
+  transform: translateY(-1px);
+}
+.run-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------
+   DATASET REQUIREMENTS SECTION
+   --------------------------------------------------------- */
+.requirements {
+  margin: 0 0 4rem;
+}
+.req-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.req-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: clamp(1.5rem, 2.8vw, 2rem);
+  color: var(--ink-0);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.req-title em { font-style: italic; color: var(--accent); }
+.req-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.22em;
+  color: var(--accent-3);
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+.req-eyebrow::before {
+  content: '';
+  display: inline-block;
+  width: 1.8rem;
+  height: 1px;
+  background: var(--accent-3);
+  margin-right: 0.7rem;
+  vertical-align: middle;
+}
+.req-note {
+  font-size: 0.92rem;
+  color: var(--ink-2);
+  max-width: 64ch;
+  margin-bottom: 2rem;
+}
+.req-note strong { color: var(--ink-0); font-weight: 500; }
+
+.req-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 900px) {
+  .req-grid { grid-template-columns: 1fr; }
+}
+.req-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--accent);
+  border-radius: 2px;
+  padding: 1.75rem 1.75rem 1.5rem;
+  position: relative;
+}
+.req-card.monthly { border-top-color: var(--accent-5); }
+.req-card.target  { border-top-color: var(--accent-2); }
+
+.req-card-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+.req-card-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 1.15rem;
+  color: var(--ink-0);
+  letter-spacing: -0.005em;
+}
+.req-card-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  text-transform: uppercase;
+  padding: 0.22rem 0.55rem;
+  background: rgba(96, 165, 250, 0.1);
+  border-radius: 2px;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+}
+.req-card.monthly .req-card-pill {
+  color: var(--accent-5);
+  background: rgba(167, 139, 250, 0.1);
+  border-color: rgba(167, 139, 250, 0.25);
+}
+.req-card.target .req-card-pill {
+  color: var(--accent-2);
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+table.req-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+table.req-table td {
+  padding: 0.48rem 0.4rem;
+  border-bottom: 1px solid var(--bg-3);
+  vertical-align: top;
+}
+table.req-table tr:last-child td { border-bottom: none; }
+table.req-table td.col-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--accent);
+  font-weight: 500;
+  white-space: nowrap;
+  width: 7.5rem;
+}
+.req-card.monthly table.req-table td.col-code { color: var(--accent-5); }
+.req-card.target  table.req-table td.col-code { color: var(--accent-2); }
+table.req-table td.col-desc {
+  color: var(--ink-1);
+  line-height: 1.4;
+}
+table.req-table td.col-unit {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  color: var(--ink-3);
+  white-space: nowrap;
+  text-align: right;
+  width: 5rem;
+}
+
+.req-footer {
+  margin-top: 2rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 900px) {
+  .req-footer { grid-template-columns: 1fr; }
+}
+.req-format-box {
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 1.25rem 1.4rem;
+}
+.req-format-hd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 0.7rem;
+}
+.req-format-box pre {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  color: var(--ink-1);
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+.req-format-box pre .kw { color: var(--accent-3); }
+.req-format-box pre .num { color: var(--accent-2); }
+
+/* ---------------------------------------------------------
+   PROGRESS / LOADING
+   --------------------------------------------------------- */
+.progress-wrap {
+  margin: 2rem 0 3rem;
+  display: none;
+  padding: 2rem;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 2px;
+}
+.progress-wrap.show { display: block; }
+.progress-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.15rem;
+  color: var(--ink-0);
+  margin-bottom: 1rem;
+}
+.progress-bar {
+  width: 100%;
+  height: 3px;
+  background: var(--bg-3);
+  overflow: hidden;
+  margin-bottom: 1rem;
+  position: relative;
+  border-radius: 2px;
+}
+.progress-bar-inner {
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: shimmer 1.8s infinite linear;
+}
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.progress-log {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  max-height: 9rem;
+  overflow-y: auto;
+  background: var(--bg-0);
+  padding: 0.75rem 1rem;
+  border-radius: 2px;
+}
+.progress-log .line { padding: 0.12rem 0; }
+.progress-log .line::before {
+  content: '›';
+  color: var(--accent);
+  margin-right: 0.55rem;
+}
+
+/* ---------------------------------------------------------
+   RESULTS SHELL
+   --------------------------------------------------------- */
+.results { display: none; padding-bottom: 6rem; }
+.results.show { display: block; animation: fadein 0.6s ease; }
+@keyframes fadein { from { opacity: 0; transform: translateY(12px); } }
+
+.section { margin: 4.5rem 0 0; scroll-margin-top: 6rem; }
+.section-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.section-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  color: var(--accent-2);
+  text-transform: uppercase;
+}
+.section-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+  color: var(--ink-0);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.section-title em { font-style: italic; color: var(--accent); }
+
+.section-sub {
+  font-size: 0.95rem;
+  color: var(--ink-2);
+  max-width: 62ch;
+  margin-top: -1rem;
+  margin-bottom: 2rem;
+}
+
+/* ---------------------------------------------------------
+   RESULT TYPE TABS (Daily / Monthly switcher at top of results)
+   --------------------------------------------------------- */
+.result-tabs {
+  margin: 3rem 0 -1rem;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent-3);
+  border-radius: 2px;
+  padding: 1.5rem 1.75rem;
+}
+.result-tabs-inner {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.result-tab {
+  padding: 0.85rem 1.5rem;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-family: 'Fraunces', serif;
+  font-size: 1.05rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.18s ease;
+  letter-spacing: -0.005em;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.result-tab:hover {
+  border-color: var(--line-2);
+  color: var(--ink-0);
+}
+.result-tab.active {
+  background: var(--accent-3);
+  color: #042f20;
+  border-color: var(--accent-3);
+  box-shadow: 0 0 18px rgba(52, 211, 153, 0.25);
+}
+.result-tab .rt-mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.result-tabs-note {
+  margin-top: 0.9rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+}
+
+/* ---------------------------------------------------------
+   RUN SUMMARY
+   --------------------------------------------------------- */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+.stat-cell {
+  background: var(--bg-1);
+  padding: 1.25rem 1.25rem 1.4rem;
+  position: relative;
+}
+.stat-lbl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  color: var(--ink-3);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+}
+.stat-val {
+  font-family: 'Fraunces', serif;
+  font-size: 1.95rem;
+  font-weight: 500;
+  color: var(--ink-0);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.stat-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  margin-top: 0.3rem;
+}
+
+/* ---------------------------------------------------------
+   METRICS TABLE
+   --------------------------------------------------------- */
+.metrics-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--bg-1);
+}
+table.metrics {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+table.metrics th,
+table.metrics td {
+  padding: 0.85rem 1.1rem;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+}
+table.metrics th:first-child,
+table.metrics td:first-child {
+  text-align: left;
+  font-family: 'Inter Tight', sans-serif;
+  color: var(--ink-0);
+  font-weight: 500;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+}
+table.metrics th {
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 0.7rem;
+  background: var(--bg-2);
+}
+table.metrics tr:last-child td { border-bottom: none; }
+table.metrics tr.highlight td {
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--ink-0);
+  font-weight: 500;
+}
+table.metrics tr.highlight td:first-child {
+  color: var(--accent-2);
+  font-weight: 700;
+  background: rgba(245, 158, 11, 0.12);
+  border-left: 3px solid var(--accent-2);
+}
+table.metrics td .mini-bar {
+  display: inline-block;
+  width: 40px;
+  height: 4px;
+  background: var(--bg-3);
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  position: relative;
+  border-radius: 2px;
+}
+table.metrics td .mini-bar .fill {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* ---------------------------------------------------------
+   PLOT GRID
+   --------------------------------------------------------- */
+.plot-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  margin-bottom: 1.75rem;
+  overflow: hidden;
+  border-radius: 2px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.plot-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 30px -10px rgba(96, 165, 250, 0.15);
+}
+.plot-hd {
+  padding: 0.9rem 1.25rem;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.plot-hd h4 {
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 1rem;
+  color: var(--ink-0);
+  letter-spacing: -0.005em;
+}
+.plot-hd .tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  color: var(--accent);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.plot-body {
+  padding: 1rem;
+  text-align: center;
+  background: var(--bg-1);
+}
+.plot-body img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  border-radius: 2px;
+}
+
+.plot-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.75rem;
+}
+@media (max-width: 900px) { .plot-row-2 { grid-template-columns: 1fr; } }
+
+/* Per-model tabs */
+.model-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0;
+}
+.model-tab {
+  padding: 0.75rem 1.2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.model-tab:hover { color: var(--ink-0); }
+.model-tab.active {
+  color: var(--ink-0);
+  border-bottom-color: var(--accent-2);
+}
+.model-tab.stacked.active { border-bottom-color: var(--accent-2); color: var(--accent-2); }
+
+/* Feature list */
+.feature-browser {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  padding: 1.5rem;
+  border-radius: 2px;
+}
+.feature-browser input {
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  color: var(--ink-0);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  border-radius: 2px;
+  outline: none;
+  margin-bottom: 1rem;
+}
+.feature-browser input:focus { border-color: var(--accent); }
+.feature-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+.feat-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--bg-3);
+  color: var(--ink-1);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+
+/* ---------------------------------------------------------
+   ERROR + FOOTER
+   --------------------------------------------------------- */
+.error-box {
+  margin: 2rem 0;
+  padding: 1.5rem 1.75rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-left: 3px solid var(--danger);
+  color: #fca5a5;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  display: none;
+  border-radius: 2px;
+  white-space: pre-wrap;
+}
+.error-box.show { display: block; }
+
+footer.site-ft {
+  margin-top: 8rem;
+  padding: 2.5rem 0;
+  border-top: 1px solid var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+footer .copy { text-transform: uppercase; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-0); }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+/* Scroll Animations */
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Back to top button */
+.back-to-top {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  width: 3.2rem;
+  height: 3.2rem;
+  background: rgba(10, 13, 20, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(20px);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 999;
+}
+.back-to-top.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.back-to-top:hover {
+  background: var(--bg-2);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 20px rgba(96, 165, 250, 0.25);
+  transform: translateY(-4px);
+}
+</style>
+</head>
+<body>
+
+<header class="site-hd">
+  <div class="container hd-inner">
+    <div class="brand">
+      <span class="dot"></span>
+      PRECIP<span style="color:var(--ink-3)">.</span>LAB
+      <small>/ stacked ensemble · rainfall · v1.0</small>
+    </div>
+    <div class="hd-meta">
+      <span>dual-transform stacking</span>
+      <span>shap interpretability</span>
+      <span>NASA/POWER MERRA-2</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===============================  HERO  =============================== -->
+<section class="hero">
+  <div class="container">
+    <div class="eyebrow">01 — Predictive Climate Modelling</div>
+    <h1 class="hero-title">
+      Predict rainfall <span class="amp">&</span><br>
+      explain every <em>drop.</em>
+    </h1>
+    <p class="lede">
+      Upload your <strong>NASA/POWER MERRA-2 CSV</strong> — monthly or daily — and this lab
+      will run the <strong>dual-transform stacked ensemble</strong> end-to-end: feature
+      engineering, chronological train/val/test split, six (or three) base learners trained
+      on sqrt and log1p targets, a Ridge meta-learner, and full SHAP interpretability.
+      Every plot from the original paper notebook, regenerated for <em>your</em> data.
+    </p>
+  </div>
+</section>
+
+<!-- =======================  DATASET REQUIREMENTS  ======================= -->
+<section class="container requirements">
+  <div class="req-header">
+    <div>
+      <div class="req-eyebrow">§ Dataset specification</div>
+      <h2 class="req-title">Columns <em>required</em> for best prediction</h2>
+    </div>
+  </div>
+  <p class="req-note">
+    This app is tuned for the exact parameter set used in the original Shillong-monthly
+    and Guwahati-daily notebooks: <strong>13 NASA/POWER MERRA-2 variables</strong> plus
+    <strong>date/time columns</strong>. Your CSV must contain <strong>all</strong> of the
+    columns below — if any are missing, the pipeline will stop with a clear error. Pull the
+    file directly from the NASA/POWER portal with default settings to guarantee a match.
+  </p>
+
+  <div class="req-grid">
+
+    <!-- Target -->
+    <div class="req-card target">
+      <div class="req-card-hd">
+        <div class="req-card-title">Target variable</div>
+        <div class="req-card-pill">Predict this</div>
+      </div>
+      <table class="req-table">
+        <tr>
+          <td class="col-code">PRECTOTCORR</td>
+          <td class="col-desc">Precipitation (bias-corrected) — the rainfall value the ensemble predicts.</td>
+          <td class="col-unit">mm/day</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Time columns -->
+    <div class="req-card">
+      <div class="req-card-hd">
+        <div class="req-card-title">Time columns</div>
+        <div class="req-card-pill">Required</div>
+      </div>
+      <table class="req-table">
+        <tr>
+          <td class="col-code">YEAR</td>
+          <td class="col-desc">4-digit year. Required for both daily and monthly files.</td>
+          <td class="col-unit">int</td>
+        </tr>
+        <tr>
+          <td class="col-code">DOY</td>
+          <td class="col-desc">Day-of-year (1–366). Daily files only. Used to build the DATE column.</td>
+          <td class="col-unit">1–366</td>
+        </tr>
+        <tr>
+          <td class="col-code">PARAMETER</td>
+          <td class="col-desc">Row label identifying which variable each row holds. Monthly (wide) files only.</td>
+          <td class="col-unit">str</td>
+        </tr>
+        <tr>
+          <td class="col-code">JAN … DEC</td>
+          <td class="col-desc">Twelve month columns holding that row's parameter value. Monthly files only.</td>
+          <td class="col-unit">—</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Temperature -->
+    <div class="req-card">
+      <div class="req-card-hd">
+        <div class="req-card-title">Temperature variables</div>
+        <div class="req-card-pill">4 cols</div>
+      </div>
+      <table class="req-table">
+        <tr><td class="col-code">T2M</td>
+            <td class="col-desc">Temperature at 2 meters above surface.</td>
+            <td class="col-unit">°C</td></tr>
+        <tr><td class="col-code">T2M_MAX</td>
+            <td class="col-desc">Daily/monthly maximum temperature at 2 m.</td>
+            <td class="col-unit">°C</td></tr>
+        <tr><td class="col-code">T2M_MIN</td>
+            <td class="col-desc">Daily/monthly minimum temperature at 2 m.</td>
+            <td class="col-unit">°C</td></tr>
+        <tr><td class="col-code">T2MDEW</td>
+            <td class="col-desc">Dew-point / frost-point temperature at 2 m.</td>
+            <td class="col-unit">°C</td></tr>
+      </table>
+    </div>
+
+    <!-- Humidity & Pressure -->
+    <div class="req-card">
+      <div class="req-card-hd">
+        <div class="req-card-title">Humidity &amp; pressure</div>
+        <div class="req-card-pill">3 cols</div>
+      </div>
+      <table class="req-table">
+        <tr><td class="col-code">QV2M</td>
+            <td class="col-desc">Specific humidity at 2 m. Strongest moisture proxy the models use.</td>
+            <td class="col-unit">g/kg</td></tr>
+        <tr><td class="col-code">RH2M</td>
+            <td class="col-desc">Relative humidity at 2 m.</td>
+            <td class="col-unit">%</td></tr>
+        <tr><td class="col-code">PS</td>
+            <td class="col-desc">Surface pressure. Drives the PS_tend features (rise/fall before storms).</td>
+            <td class="col-unit">kPa</td></tr>
+      </table>
+    </div>
+
+    <!-- Wind -->
+    <div class="req-card">
+      <div class="req-card-hd">
+        <div class="req-card-title">Wind variables</div>
+        <div class="req-card-pill">4 cols</div>
+      </div>
+      <table class="req-table">
+        <tr><td class="col-code">WS2M</td>
+            <td class="col-desc">Wind speed at 2 m above surface.</td>
+            <td class="col-unit">m/s</td></tr>
+        <tr><td class="col-code">WS10M</td>
+            <td class="col-desc">Wind speed at 10 m above surface.</td>
+            <td class="col-unit">m/s</td></tr>
+        <tr><td class="col-code">WD2M</td>
+            <td class="col-desc">Wind direction at 2 m. Decomposed into u/v components internally.</td>
+            <td class="col-unit">°</td></tr>
+        <tr><td class="col-code">WD10M</td>
+            <td class="col-desc">Wind direction at 10 m. Decomposed into u/v components internally.</td>
+            <td class="col-unit">°</td></tr>
+      </table>
+    </div>
+
+    <!-- Soil -->
+    <div class="req-card">
+      <div class="req-card-hd">
+        <div class="req-card-title">Soil moisture</div>
+        <div class="req-card-pill">1 col</div>
+      </div>
+      <table class="req-table">
+        <tr><td class="col-code">GWETTOP</td>
+            <td class="col-desc">Surface soil wetness. Strong leading indicator for antecedent moisture.</td>
+            <td class="col-unit">0–1</td></tr>
+      </table>
+    </div>
+
+  </div>
+
+  <div class="req-footer">
+    <div class="req-format-box">
+      <div class="req-format-hd">Expected header — Monthly (wide)</div>
+<pre><span class="kw">-BEGIN HEADER-</span>
+NASA/POWER Monthly and Annual data
+...
+<span class="kw">-END HEADER-</span>
+<span class="kw">PARAMETER</span>,<span class="kw">YEAR</span>,<span class="kw">JAN</span>,<span class="kw">FEB</span>,...,<span class="kw">DEC</span>,<span class="kw">ANN</span>
+GWETTOP,<span class="num">1981</span>,<span class="num">0.80</span>,<span class="num">0.79</span>,...
+PRECTOTCORR,<span class="num">1981</span>,<span class="num">13.2</span>,<span class="num">18.7</span>,...
+T2M,<span class="num">1981</span>,<span class="num">9.8</span>,<span class="num">11.2</span>,...
+<span style="color:var(--ink-3)">(13 PARAMETER rows per year)</span></pre>
+    </div>
+    <div class="req-format-box">
+      <div class="req-format-hd">Expected header — Daily (flat)</div>
+<pre><span class="kw">-BEGIN HEADER-</span>
+NASA/POWER Daily data
+...
+<span class="kw">-END HEADER-</span>
+<span class="kw">YEAR</span>,<span class="kw">DOY</span>,<span class="kw">T2M</span>,<span class="kw">T2MDEW</span>,<span class="kw">T2M_MAX</span>,<span class="kw">T2M_MIN</span>,
+<span class="kw">QV2M</span>,<span class="kw">RH2M</span>,<span class="kw">PS</span>,<span class="kw">WS2M</span>,<span class="kw">WS10M</span>,<span class="kw">WD10M</span>,
+<span class="kw">WD2M</span>,<span class="kw">GWETTOP</span>,<span class="kw">PRECTOTCORR</span>
+<span class="num">1981</span>,<span class="num">1</span>,<span class="num">14.2</span>,<span class="num">8.1</span>,<span class="num">17.9</span>,...</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============================  UPLOAD  ================================ -->
+<section class="container upload-section">
+  <label class="drop-zone" id="drop-zone" for="file-input">
+    <div class="drop-icon">⌁</div>
+    <div class="drop-title">Drop your CSV here</div>
+    <div class="drop-sub">or click to select file from disk</div>
+    <div class="drop-mono">supports .csv · max 50 MB</div>
+    <input type="file" id="file-input" accept=".csv">
+    <div class="file-chosen" id="file-chosen">
+      <span class="fname" id="fname"></span>
+      <span class="fsize" id="fsize"></span>
+    </div>
+  </label>
+
+  <div class="panel">
+    <h3>Run configuration</h3>
+    <div class="radio-group" id="freq-group">
+      <div class="radio-pill active" data-value="auto">
+        <span class="dot-r"></span>
+        <span>Auto-detect</span>
+        <small>recommended</small>
+      </div>
+      <div class="radio-pill" data-value="monthly">
+        <span class="dot-r"></span>
+        <span>Monthly (1981–present)</span>
+        <small>6-model stack</small>
+      </div>
+      <div class="radio-pill" data-value="daily">
+        <span class="dot-r"></span>
+        <span>Daily</span>
+        <small>3-model stack</small>
+      </div>
+    </div>
+    <button class="run-btn" id="run-btn" disabled>Run full pipeline →</button>
+  </div>
+</section>
+
+<div class="container">
+  <div class="error-box" id="error-box"></div>
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-title">Training stacked ensemble…</div>
+    <div class="progress-bar"><div class="progress-bar-inner"></div></div>
+    <div class="progress-log" id="progress-log">
+      <div class="line">Uploading & parsing NASA/POWER CSV…</div>
+    </div>
+    <div style="margin-top: 0.9rem; font-size: 0.78rem; color: var(--ink-3); font-family: 'JetBrains Mono', monospace;">
+      ⏱ Typical run: monthly ≈ 30–60 s · daily ≈ 2–4 min (depends on record length)
+    </div>
+  </div>
+</div>
+
+<!-- ============================= RESULTS ================================= -->
+<div class="results container" id="results">
+
+  <!-- Result-type selector — only appears when both daily & monthly are available -->
+  <div class="result-tabs" id="result-tabs" style="display:none;">
+    <div class="result-tabs-inner" id="result-tabs-inner"></div>
+    <div class="result-tabs-note" id="result-tabs-note"></div>
+  </div>
+
+  <section class="section" id="sec-summary">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 02 — Run Summary</div>
+        <h2 class="section-title">Dataset <em>at a glance</em></h2>
+      </div>
+    </div>
+    <div class="summary-grid" id="summary-grid"></div>
+  </section>
+
+  <section class="section" id="sec-eda">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 03 — Exploratory Data Analysis</div>
+        <h2 class="section-title">The <em>shape</em> of rainfall.</h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      Distribution is heavily right-skewed with a seasonal monsoon spike. Correlation
+      ranking highlights which meteorological variables drive precipitation.
+    </p>
+    <div class="plot-card">
+      <div class="plot-hd"><h4>Six-panel EDA overview</h4><span class="tag">EDA</span></div>
+      <div class="plot-body"><img id="plot-eda" alt="EDA"></div>
+    </div>
+  </section>
+
+  <section class="section" id="sec-fe">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 04 — Feature Engineering</div>
+        <h2 class="section-title">From <em>twelve</em> variables to <em>hundreds</em>.</h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      Cyclical encodings, lag features, leak-free climatology, rolling statistics,
+      physical interactions, and streak counters — all the transformations from the original
+      notebook, applied to your data. Every feature is chronologically safe.
+    </p>
+    <div class="plot-row-2">
+      <div class="plot-card">
+        <div class="plot-hd"><h4>Feature family breakdown</h4><span class="tag">FE</span></div>
+        <div class="plot-body"><img id="plot-fe" alt="Feature engineering"></div>
+      </div>
+      <div class="feature-browser">
+        <h4 style="font-family:'Fraunces',serif;font-weight:500;font-size:1rem;color:var(--ink-0);margin-bottom:0.9rem;">
+          All engineered features
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:var(--ink-3);letter-spacing:0.15em;margin-left:0.5rem;">FILTERABLE</span>
+        </h4>
+        <input type="text" id="feat-search" placeholder="filter features...">
+        <div class="feature-chips" id="feat-chips"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="sec-metrics">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 05 — Evaluation Metrics</div>
+        <h2 class="section-title">Every model, every <em>metric.</em></h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      MAE, MSE, RMSE, R² and Kling-Gupta Efficiency on the held-out test split,
+      reported for every base learner and the stacked ensemble. The stacked row is
+      always the bottom row — that's the one you cite.
+    </p>
+    <div class="metrics-table-wrap">
+      <table class="metrics" id="metrics-table"></table>
+    </div>
+    <div class="plot-card" style="margin-top: 1.75rem;">
+      <div class="plot-hd"><h4>RMSE & R² comparison across models</h4><span class="tag">COMPARE</span></div>
+      <div class="plot-body"><img id="plot-comparison" alt="Model comparison"></div>
+    </div>
+  </section>
+
+  <section class="section" id="sec-models">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 06 — Actual vs Predicted</div>
+        <h2 class="section-title">Every model, <em>side by side</em>.</h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      Time series overlay and the actual-vs-predicted scatter plot for each base learner and the stacked ensemble.
+    </p>
+    <div id="models-container"></div>
+  </section>
+
+  <section class="section" id="sec-diagnostics">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 07 — Diagnostics</div>
+        <h2 class="section-title">Residuals <em>tell the</em> truth.</h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      Residual time series, histogram, and Q-Q plot for the stacked model.
+      RMSE broken out by month — useful for spotting seasonal bias.
+      Full train+test timeline shows whether the model generalizes.
+    </p>
+    <div class="plot-card">
+      <div class="plot-hd"><h4>Residual analysis (stacked)</h4><span class="tag">DIAG</span></div>
+      <div class="plot-body"><img id="plot-residuals" alt="Residuals"></div>
+    </div>
+    <div class="plot-card">
+      <div class="plot-hd"><h4>RMSE by calendar month</h4><span class="tag">SEASONAL</span></div>
+      <div class="plot-body"><img id="plot-monthrmse" alt="Monthly RMSE"></div>
+    </div>
+    <div class="plot-card">
+      <div class="plot-hd"><h4>Full timeline — train & test</h4><span class="tag">TIMELINE</span></div>
+      <div class="plot-body"><img id="plot-full-ts" alt="Full timeline"></div>
+    </div>
+  </section>
+
+  <section class="section" id="sec-shap">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 08 — SHAP Interpretability</div>
+        <h2 class="section-title">Which features <em>matter most</em>?</h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      Game-theoretic attribution for each base learner. Bar plot = mean |SHAP|
+      (global importance). Beeswarm = per-sample SHAP distribution with colour
+      encoding feature value.
+    </p>
+
+    <h3 style="font-family:'Fraunces',serif;font-weight:400;font-size:1.3rem;margin-top:1rem;color:var(--ink-0);letter-spacing:-0.01em;">
+      Main model (CatBoost, all features)
+    </h3>
+    <div class="plot-row-2">
+      <div class="plot-card">
+        <div class="plot-hd"><h4>SHAP importance — bar</h4><span class="tag">GLOBAL</span></div>
+        <div class="plot-body"><img id="plot-shap-bar" alt="SHAP bar"></div>
+      </div>
+      <div class="plot-card">
+        <div class="plot-hd"><h4>SHAP beeswarm</h4><span class="tag">DISTRIBUTION</span></div>
+        <div class="plot-body"><img id="plot-shap-beeswarm" alt="SHAP beeswarm"></div>
+      </div>
+    </div>
+
+    <h3 style="font-family:'Fraunces',serif;font-weight:400;font-size:1.3rem;margin-top:2.5rem;color:var(--ink-0);letter-spacing:-0.01em;">
+      LightGBM (meteorological features only)
+    </h3>
+    <div class="plot-row-2">
+      <div class="plot-card">
+        <div class="plot-hd"><h4>SHAP importance — bar</h4><span class="tag">LGB</span></div>
+        <div class="plot-body"><img id="plot-shap-lgb-bar" alt="SHAP LGB bar"></div>
+      </div>
+      <div class="plot-card">
+        <div class="plot-hd"><h4>SHAP beeswarm</h4><span class="tag">LGB</span></div>
+        <div class="plot-body"><img id="plot-shap-lgb-beeswarm" alt="SHAP LGB beeswarm"></div>
+      </div>
+    </div>
+
+    <h3 style="font-family:'Fraunces',serif;font-weight:400;font-size:1.3rem;margin-top:2.5rem;color:var(--ink-0);letter-spacing:-0.01em;">
+      XGBoost (lag & rolling features only)
+    </h3>
+    <div class="plot-row-2">
+      <div class="plot-card">
+        <div class="plot-hd"><h4>SHAP importance — bar</h4><span class="tag">XGB</span></div>
+        <div class="plot-body"><img id="plot-shap-xgb-bar" alt="SHAP XGB bar"></div>
+      </div>
+      <div class="plot-card">
+        <div class="plot-hd"><h4>SHAP beeswarm</h4><span class="tag">XGB</span></div>
+        <div class="plot-body"><img id="plot-shap-xgb-beeswarm" alt="SHAP XGB beeswarm"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="sec-meta">
+    <div class="section-hd">
+      <div>
+        <div class="section-num">§ 09 — Ridge Meta-Learner</div>
+        <h2 class="section-title">How the stack <em>combines</em> its parts.</h2>
+      </div>
+    </div>
+    <p class="section-sub">
+      Linear weights the Ridge meta-learner assigned to each base model's raw-scale prediction.
+      Large positive values = the meta-learner trusts that model strongly; small or negative
+      values = the meta-learner is de-emphasizing it.
+    </p>
+    <div class="metrics-table-wrap">
+      <table class="metrics" id="meta-table"></table>
+    </div>
+  </section>
+
+</div>
+
+<footer class="site-ft">
+  <div class="container" style="display:flex; justify-content:space-between; width:100%;">
+    <span class="copy">PRECIP.LAB · built for climate research</span>
+    <span>xgboost · lightgbm · catboost · shap · scikit-learn</span>
+  </div>
+</footer>
+
+<script>
+/* ===========================================================
+   UI LOGIC
+   =========================================================== */
+const $ = (id) => document.getElementById(id);
+const dropZone = $('drop-zone');
+const fileInput = $('file-input');
+const fileChosen = $('file-chosen');
+const runBtn = $('run-btn');
+const freqGroup = $('freq-group');
+const errorBox = $('error-box');
+const progressWrap = $('progress-wrap');
+const progressLog = $('progress-log');
+const results = $('results');
+
+let selectedFile = null;
+let selectedFreq = 'auto';
+
+/* ------ File selection ------ */
+fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault(); dropZone.classList.add('dragging');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragging'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragging');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    showError('Please upload a .csv file.');
+    return;
+  }
+  selectedFile = file;
+  $('fname').textContent = file.name;
+  $('fsize').textContent = `${(file.size / 1024).toFixed(1)} KB`;
+  fileChosen.classList.add('show');
+  runBtn.disabled = false;
+  hideError();
+}
+
+/* ------ Frequency radio ------ */
+freqGroup.querySelectorAll('.radio-pill').forEach(p => {
+  p.addEventListener('click', () => {
+    freqGroup.querySelectorAll('.radio-pill').forEach(x => x.classList.remove('active'));
+    p.classList.add('active');
+    selectedFreq = p.dataset.value;
+  });
+});
+
+/* ------ Errors ------ */
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.classList.add('show');
+}
+function hideError() { errorBox.classList.remove('show'); }
+
+/* ------ Run button ------ */
+runBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  hideError();
+  results.classList.remove('show');
+  progressWrap.classList.add('show');
+  runBtn.disabled = true;
+  progressLog.innerHTML = '';
+  pushLog('Uploading & parsing CSV…');
+  pushLog('Engineering features (this takes a moment for daily data)…');
+  pushLog('Training base learners (LightGBM · XGBoost · CatBoost)…');
+  pushLog('Fitting Ridge meta-learner…');
+  pushLog('Daily uploads also run a monthly pipeline on aggregated data.');
+  pushLog('Computing SHAP values and rendering plots…');
+
+  const fd = new FormData();
+  fd.append('file', selectedFile);
+  fd.append('frequency', selectedFreq);
+
+  try {
+    const t0 = performance.now();
+    const resp = await fetch('/api/analyze', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!data.ok) {
+      pushLog(`Error: ${data.error}`);
+      showError(data.error + (data.traceback ? '\n\n' + data.traceback : ''));
+      progressWrap.classList.remove('show');
+      runBtn.disabled = false;
+      return;
+    }
+    const dt = ((performance.now() - t0) / 1000).toFixed(1);
+    pushLog(`Finished in ${dt} s. Rendering results…`);
+    renderResults(data);
+    progressWrap.classList.remove('show');
+    runBtn.disabled = false;
+    document.getElementById('sec-summary')
+            .scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    showError('Network / server error: ' + e.message);
+    progressWrap.classList.remove('show');
+    runBtn.disabled = false;
+  }
+});
+
+function pushLog(msg) {
+  const div = document.createElement('div');
+  div.className = 'line';
+  div.textContent = msg;
+  progressLog.appendChild(div);
+  progressLog.scrollTop = progressLog.scrollHeight;
+}
+
+/* ===========================================================
+   RENDER RESULTS
+   =========================================================== */
+let _allResults = [];       // array of result objects from the envelope
+let _activeResultIdx = 0;
+
+function renderResults(d) {
+  // Envelope shape: {ok, ..., results: [r1, r2, ...]}. For backward compat
+  // the top-level fields also mirror results[0].
+  const list = Array.isArray(d.results) && d.results.length ? d.results : [d];
+  _allResults = list;
+  _activeResultIdx = 0;
+
+  renderResultTabs(list);
+  renderOneResult(list[0]);
+  results.classList.add('show');
+}
+
+function renderResultTabs(list) {
+  const wrap  = $('result-tabs');
+  const inner = $('result-tabs-inner');
+  const note  = $('result-tabs-note');
+
+  if (list.length <= 1) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'block';
+  inner.innerHTML = list.map((r, i) => {
+    const label = r.label || (r.frequency === 'monthly' ? 'Monthly predictions' : 'Daily predictions');
+    const stacked = r.metrics && r.metrics.STACKED;
+    const sub = stacked
+      ? `R²&nbsp;${stacked.R2.toFixed(3)} · RMSE&nbsp;${stacked.RMSE.toFixed(3)}`
+      : r.frequency.toUpperCase();
+    return `<button class="result-tab ${i === 0 ? 'active' : ''}" data-idx="${i}">
+      <span>${label}</span>
+      <span class="rt-mono">${sub}</span>
+    </button>`;
+  }).join('');
+
+  note.innerHTML = list.some(r => r.aggregated_from_daily)
+    ? '→ Daily predictions come straight from your upload. Monthly predictions are generated by aggregating the daily data (mean for most vars, max/min for temperature extrema, circular mean for wind direction) and running the 6-model stack on top.'
+    : '';
+
+  inner.querySelectorAll('.result-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (idx === _activeResultIdx) return;
+      _activeResultIdx = idx;
+      inner.querySelectorAll('.result-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderOneResult(list[idx]);
+      document.getElementById('sec-summary')
+              .scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+function renderOneResult(d) {
+  renderSummary(d);
+  renderMetrics(d.metrics);
+  renderMetaWeights(d.meta_weights, d.frequency);
+  renderFeatureList(d.feature_cols);
+  renderModelTabs(d);
+
+  // Static plots
+  setImg('plot-eda', d.plots.eda);
+  setImg('plot-fe',  d.plots.feature_engineering);
+  setImg('plot-comparison', d.plots.model_comparison);
+  setImg('plot-residuals',  d.plots.residuals);
+  setImg('plot-monthrmse',  d.plots.rmse_by_month);
+  setImg('plot-full-ts',    d.plots.full_timeseries);
+  setImg('plot-shap-bar',       d.plots.shap_bar);
+  setImg('plot-shap-beeswarm',  d.plots.shap_beeswarm);
+  setImg('plot-shap-lgb-bar',   d.plots.shap_lgb_bar);
+  setImg('plot-shap-lgb-beeswarm', d.plots.shap_lgb_beeswarm);
+  setImg('plot-shap-xgb-bar',   d.plots.shap_xgb_bar);
+  setImg('plot-shap-xgb-beeswarm', d.plots.shap_xgb_beeswarm);
+  
+  if (window.observeNewElements) window.observeNewElements();
+}
+
+function setImg(id, b64) {
+  const el = $(id);
+  if (b64) el.src = 'data:image/png;base64,' + b64;
+  else el.alt = 'plot unavailable';
+}
+
+function renderSummary(d) {
+  const stacked = d.metrics.STACKED;
+  const html = `
+    <div class="stat-cell">
+      <div class="stat-lbl">Frequency</div>
+      <div class="stat-val" style="color:var(--accent-3)">${d.frequency.toUpperCase()}</div>
+      <div class="stat-sub">${d.frequency === 'monthly' ? '6-model stack' : '3-model stack'}</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-lbl">Clean samples</div>
+      <div class="stat-val">${d.n_samples.toLocaleString()}</div>
+      <div class="stat-sub">${d.n_features} features</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-lbl">Train / Val / Test</div>
+      <div class="stat-val" style="font-size:1.35rem">
+        ${d.split_sizes.train} / ${d.split_sizes.val} / ${d.split_sizes.test}
+      </div>
+      <div class="stat-sub">70 / 15 / 15 chronological</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-lbl">Test period</div>
+      <div class="stat-val" style="font-size:1.2rem">${d.test_period[0]}</div>
+      <div class="stat-sub">to ${d.test_period[1]}</div>
+    </div>
+    <div class="stat-cell" style="background:rgba(245,158,11,0.06);border-left:2px solid var(--accent-2)">
+      <div class="stat-lbl" style="color:var(--accent-2)">Stacked R²</div>
+      <div class="stat-val" style="color:var(--accent-2)">${stacked.R2.toFixed(4)}</div>
+      <div class="stat-sub">RMSE ${stacked.RMSE.toFixed(3)} mm/day</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-lbl">Stacked KGE</div>
+      <div class="stat-val">${stacked.KGE.toFixed(4)}</div>
+      <div class="stat-sub">Kling-Gupta Efficiency</div>
+    </div>`;
+  $('summary-grid').innerHTML = html;
+}
+
+function renderMetrics(m) {
+  const rows = Object.entries(m);
+  // Find max RMSE for bar-scale
+  const maxRmse = Math.max(...rows.map(([,v]) => v.RMSE));
+  const maxR2   = Math.max(...rows.map(([,v]) => Math.max(0, v.R2)));
+  const html = `
+    <thead><tr>
+      <th>Model</th><th>MAE</th><th>MSE</th><th>RMSE</th><th>R²</th><th>KGE</th>
+    </tr></thead>
+    <tbody>
+      ${rows.map(([name, v]) => {
+        const hi = name === 'STACKED' ? 'highlight' : '';
+        const rmseFill = (1 - v.RMSE / maxRmse) * 100;
+        const r2Fill   = Math.max(0, v.R2 / maxR2) * 100;
+        return `<tr class="${hi}">
+          <td>${name}</td>
+          <td>${v.MAE.toFixed(4)}</td>
+          <td>${v.MSE.toFixed(4)}</td>
+          <td>${v.RMSE.toFixed(4)}<span class="mini-bar"><span class="fill" style="width:${rmseFill}%;background:var(--accent-3)"></span></span></td>
+          <td>${v.R2.toFixed(4)}<span class="mini-bar"><span class="fill" style="width:${r2Fill}%"></span></span></td>
+          <td>${v.KGE.toFixed(4)}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>`;
+  $('metrics-table').innerHTML = html;
+}
+
+function renderMetaWeights(w, freq) {
+  const rows = Object.entries(w).filter(([k]) => !k.startsWith('_'));
+  const alpha = w['_best_alpha'];
+  const intc  = w['_intercept'];
+  const html = `
+    <thead><tr>
+      <th>Base model</th><th>Ridge weight</th><th>Role</th>
+    </tr></thead>
+    <tbody>
+      ${rows.map(([name, val]) => {
+        const role = val > 0.3 ? 'dominant'
+                   : val > 0.1 ? 'supporting'
+                   : val > -0.05 ? 'modest'
+                   : 'de-emphasized';
+        const col = val > 0.3 ? 'var(--accent-2)' : val > 0.1 ? 'var(--accent-3)' : 'var(--ink-1)';
+        return `<tr>
+          <td>${name}</td>
+          <td style="color:${col}">${val.toFixed(4)}</td>
+          <td style="text-align:left;text-transform:uppercase;font-size:0.72rem;letter-spacing:0.15em;color:var(--ink-3)">${role}</td>
+        </tr>`;
+      }).join('')}
+      <tr>
+        <td>intercept</td>
+        <td>${intc.toFixed(4)}</td>
+        <td style="text-align:left;color:var(--ink-3)">—</td>
+      </tr>
+      <tr>
+        <td>best α (CV)</td>
+        <td>${alpha}</td>
+        <td style="text-align:left;color:var(--ink-3)">TimeSeriesSplit</td>
+      </tr>
+    </tbody>`;
+  $('meta-table').innerHTML = html;
+}
+
+function renderFeatureList(feats) {
+  const chips = $('feat-chips');
+  const render = (query='') => {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? feats.filter(f => f.toLowerCase().includes(q)) : feats;
+    chips.innerHTML = filtered.map(f => `<span class="feat-chip">${f}</span>`).join('');
+  };
+  render();
+  $('feat-search').oninput = (e) => render(e.target.value);
+}
+
+function renderModelTabs(d) {
+  const container = $('models-container');
+  const modelNames = Object.keys(d.plots.models);
+  
+  container.innerHTML = modelNames.map(n => {
+    const p = d.plots.models[n];
+    return `
+  <h3 style="font-family:'Fraunces',serif;font-weight:400;font-size:1.3rem;margin-top:2.5rem;margin-bottom:1rem;color:var(--ink-0);letter-spacing:-0.01em;">
+    ${n}
+  </h3>
+  <div class="plot-card">
+    <div class="plot-hd"><h4>${n} — Actual vs Predicted (time series)</h4><span class="tag">TIME SERIES</span></div>
+    <div class="plot-body"><img src="data:image/png;base64,${p.timeseries}" alt="${n} timeseries"></div>
+  </div>
+  <div class="plot-card">
+    <div class="plot-hd"><h4>${n} — Actual vs Predicted (scatter)</h4><span class="tag">SCATTER</span></div>
+    <div class="plot-body"><img src="data:image/png;base64,${p.scatter}" alt="${n} scatter"></div>
+  </div>
+    `;
+  }).join('');
+}
+
+// INTERACTIVE: Scroll observer
+document.addEventListener('DOMContentLoaded', () => {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('active');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.05, rootMargin: '0px 0px -50px 0px' });
+
+  // Add reveal class to elements after rendering is complete, or pre-existing ones
+  document.querySelectorAll('.section').forEach(el => {
+    el.classList.add('reveal');
+    observer.observe(el);
+  });
+  
+  // Create Back to Top button
+  const bttBtn = document.createElement('button');
+  bttBtn.className = 'back-to-top';
+  bttBtn.innerHTML = '↑';
+  bttBtn.onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+  document.body.appendChild(bttBtn);
+
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 400) {
+      bttBtn.classList.add('visible');
+    } else {
+      bttBtn.classList.remove('visible');
+    }
+  });
+  
+  // We attach a global function to allow new elements to be observed
+  window.observeNewElements = () => {
+    document.querySelectorAll('.plot-card:not(.reveal), .stat-cell:not(.reveal)').forEach(el => {
+      el.classList.add('reveal');
+      observer.observe(el);
+    });
+  };
+});
+</script>
+</body>
+</html>
